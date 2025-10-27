@@ -1,14 +1,15 @@
 # model training
 import torch
+import gc
 import torch.nn as nn
 from datasets.fire_dataset import train_loader, val_loader
-from models.CONVLSTM import ConvLSTM
+from models.CONVLSTM import ConvLSTM, ConvLSTM2Layers
 import pandas as pd
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 criterion = nn.MSELoss()
-model = ConvLSTM().to(device)
+model = ConvLSTM2Layers().to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
     optimizer, mode='min', factor=0.5, patience=3)
@@ -21,7 +22,6 @@ def train_and_valid(epochs=10):
     for epoch in range(epochs):
         model.train()
         train_loss = 0
-        count = 0
         for X, y in train_loader:
             X, y = X.to(device), y.to(device)
             optimizer.zero_grad()
@@ -30,8 +30,6 @@ def train_and_valid(epochs=10):
             loss.backward()
             optimizer.step()
             train_loss += loss.item()
-            count += 1
-            print("train set: ", count)
         model.eval()
         val_loss = 0
         print(f"Validating... Epoch {epoch+1}")
@@ -51,14 +49,16 @@ def train_and_valid(epochs=10):
         print(f"Epoch [{
               epoch + 1}/{epochs}] | Train Loss: {train_loss:.2f} | Val Loss: {val_loss:.2f}")
         save_checkpoint(epoch, model, optimizer,
-                        scheduler, filename="ConvLSTM")
-        if epoch % 5 == 0:
+                        scheduler, filename="ConvLSTM2Layers")
+        if (epoch + 1) % 5 == 0:
             save_losses(epoch, train_losses, val_losses)
 
         if val_loss <= train_loss:
             save_checkpoint(epoch, model, optimizer,
-                            scheduler, filename="ConvLSTM_Best")
-
+                            scheduler, filename="ConvLSTM2Layers_Best")
+        del X, y_pred, loss
+        gc.collect()
+        torch.cuda.empty_cache()
     print("Training Done...")
 
 
@@ -85,4 +85,4 @@ if __name__ == '__main__':
 
     print('CUDA AVAILABLITY STATUS: ', torch.cuda.is_available())
 
-    train_and_valid(epochs=20)
+    train_and_valid(epochs=50)

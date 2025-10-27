@@ -48,3 +48,31 @@ class ConvLSTM(nn.Module):
 
         out = self.conv_out(h)
         return out
+
+
+class ConvLSTM2Layers(nn.Module):
+    def __init__(self, input_channel=1, hidden_channels=16, kernel_size=3, seq_len=7):
+        super().__init__()
+        self.hidden_channels = hidden_channels
+        self.seq_len = seq_len
+        self.cell1 = ConvLSTMCell(input_channel, hidden_channels, kernel_size)
+        self.cell2 = ConvLSTMCell(
+            hidden_channels, hidden_channels*2, kernel_size)
+        self.conv_out = nn.Conv2d(hidden_channels*2, 1, 1)
+
+    def forward(self, x: torch.Tensor):
+        batch_size, seq_len, C, H, W = x.size()
+        h1 = torch.zeros(batch_size, self.hidden_channels,
+                         H, W, device=x.device)
+        c1 = torch.zeros(batch_size, self.hidden_channels,
+                         H, W, device=x.device)
+
+        h2 = torch.zeros(batch_size, self.hidden_channels*2,
+                         H, W, device=x.device)
+        c2 = torch.zeros(batch_size, self.hidden_channels*2,
+                         H, W, device=x.device)
+        for t in range(seq_len):
+            h1, c1 = self.cell1(x[:, t], h1, c1)
+            h2, c2 = self.cell2(h1, h2, c2)
+        out = self.conv_out(h2)
+        return out

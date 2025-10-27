@@ -209,7 +209,7 @@ train_dataset = FireSpreadDatasetLazy(
 val_dataset = FireSpreadDatasetLazy(
     csv_files, seq_len=seq_len, dates=valid_dates)
 
-batch_size = 4
+batch_size = 2
 train_loader = DataLoader(
     train_dataset, batch_size=batch_size, shuffle=True,  num_workers=4)
 val_loader = DataLoader(
