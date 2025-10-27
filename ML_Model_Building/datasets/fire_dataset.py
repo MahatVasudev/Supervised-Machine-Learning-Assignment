@@ -1,8 +1,6 @@
 import torch
 import numpy as np
-from torch.utils.data import Dataset, ConcatDataset, DataLoader
-import utils
-import glob
+from torch.utils.data import Dataset,  DataLoader
 import pandas as pd
 import os
 
@@ -88,9 +86,13 @@ class FireDataset(Dataset):
 class FireSpreadDatasetLazy(Dataset):
     def __init__(self, csv_files: list[str], seq_len=7,
                  lat_col='lat_bin', lon_col='long_bin', date_col='date',
-                 target_col='fire_count', downsample=1, dates: list = None):
+                 target_col='fire_count', downsample=1,
+                 dates: list = None, cache_dir="./cache"):
         """
-        Lazy-loading dataset for large fire data with caching and optional date subset.
+        Optimized Lazy-loading dataset for large fire data with:
+        - One-time CSV read at init
+        - In-memory & optional on-disk cache
+        - Faster grid lookup by date
         """
         self.seq_len = seq_len
         self.lat_col = lat_col
@@ -99,68 +101,85 @@ class FireSpreadDatasetLazy(Dataset):
         self.target_col = target_col
         self.csv_files = csv_files
         self.downsample = downsample
+        self.cache_dir = cache_dir
+        os.makedirs(cache_dir, exist_ok=True)
 
-        # Load metadata only
-        dfs_meta = [pd.read_csv(
-            f, usecols=[lat_col, lon_col, date_col, target_col]) for f in csv_files]
+        # 1️⃣ Load metadata once
+        dfs_meta = []
+        for f in csv_files:
+            df = pd.read_csv(
+                f, usecols=[lat_col, lon_col, date_col, target_col])
+            df[date_col] = pd.to_datetime(df[date_col])
+            dfs_meta.append(df)
         self.data_meta = pd.concat(dfs_meta, ignore_index=True)
-        self.data_meta[self.date_col] = pd.to_datetime(
-            self.data_meta[self.date_col])
 
+        # 2️⃣ Create bins
         self.lat_bins = np.sort(self.data_meta[lat_col].unique())[::downsample]
         self.lon_bins = np.sort(self.data_meta[lon_col].unique())[::downsample]
         self.num_lat = len(self.lat_bins)
         self.num_lon = len(self.lon_bins)
 
-        # Subset of dates (for train/val/test split)
+        # 3️⃣ Extract all unique dates
         all_dates_sorted = sorted(self.data_meta[date_col].unique())
         self.dates = sorted(dates) if dates is not None else all_dates_sorted
         self.num_sequences = len(self.dates) - self.seq_len
 
-        # cache dictionary
+        # 4️⃣ Group by date once
+        self.data_by_date = {
+            date: df for date, df in self.data_meta.groupby(self.data_meta[date_col])
+        }
+
+        # 5️⃣ RAM cache
         self._grid_cache = {}
 
     def __len__(self):
         return self.num_sequences
 
+    def _cache_path(self, date):
+        """Get on-disk cache path for this date."""
+        return os.path.join(self.cache_dir, f"{str(date.date())}.npy")
+
     def _load_grid_for_day(self, date):
-        """
-        Load one day's grid, using cache if available.
-        """
+        """Load grid for a given date (RAM or disk cache if possible)."""
         if date in self._grid_cache:
             return self._grid_cache[date]
 
-        grid = np.zeros((self.num_lat, self.num_lon), dtype=np.float32)
+        # Check disk cache
+        cache_path = self._cache_path(date)
+        if os.path.exists(cache_path):
+            grid = np.load(cache_path)
+            self._grid_cache[date] = grid
+            return grid
 
-        for f in self.csv_files:
-            day_df = pd.read_csv(
-                f, usecols=[self.lat_col, self.lon_col, self.date_col, self.target_col])
-            day_df[self.date_col] = pd.to_datetime(day_df[self.date_col])
-            day_df = day_df[day_df[self.date_col] == date]
-            if day_df.empty:
-                continue
+        # Otherwise build from grouped data
+        if date not in self.data_by_date:
+            grid = np.zeros((self.num_lat, self.num_lon), dtype=np.float32)
+            self._grid_cache[date] = grid
+            return grid
 
-            # pivot and reindex to standard grid
-            temp = day_df.pivot(
-                index=self.lat_col, columns=self.lon_col, values=self.target_col).fillna(0)
-            temp = temp.reindex(index=self.lat_bins,
-                                columns=self.lon_bins, fill_value=0)
-            grid += temp.values
+        df_day = self.data_by_date[date]
+        temp = df_day.pivot(
+            index=self.lat_col, columns=self.lon_col, values=self.target_col).fillna(0)
+        temp = temp.reindex(index=self.lat_bins,
+                            columns=self.lon_bins, fill_value=0)
+        grid = temp.values.astype(np.float32)
 
+        # Save to disk for next time
+        np.save(cache_path, grid)
         self._grid_cache[date] = grid
         return grid
 
     def __getitem__(self, idx):
-        # Build sequence X
-        seq_dates = self.dates[idx:idx+self.seq_len]
+        # Sequence of input days
+        seq_dates = self.dates[idx:idx + self.seq_len]
         X_seq = np.stack([self._load_grid_for_day(d)
                          for d in seq_dates], axis=0)
+        X_seq = X_seq[:, np.newaxis, :, :]  # (seq_len, 1, H, W)
 
-        X_seq = np.expand_dims(X_seq, axis=1)
-        # Target Y
-        Y_date = self.dates[idx+self.seq_len]
-        Y_grid = self._load_grid_for_day(Y_date)
-        Y_grid = Y_grid[np.newaxis, :, :]
+        # Target day
+        Y_date = self.dates[idx + self.seq_len]
+        Y_grid = self._load_grid_for_day(Y_date)[np.newaxis, :, :]  # (1, H, W)
+
         return torch.tensor(X_seq, dtype=torch.float32), torch.tensor(Y_grid, dtype=torch.float32)
 
 
