@@ -21,7 +21,8 @@ def train_and_valid(epochs=10):
     for epoch in range(epochs):
         model.train()
         train_loss = 0
-        for i, X, y in enumerate(train_loader):
+        count = 0
+        for X, y in train_loader:
             X, y = X.to(device), y.to(device)
             optimizer.zero_grad()
             y_pred = model(X)
@@ -29,7 +30,8 @@ def train_and_valid(epochs=10):
             loss.backward()
             optimizer.step()
             train_loss += loss.item()
-            print("train set: ", i)
+            count += 1
+            print("train set: ", count)
         model.eval()
         val_loss = 0
         print(f"Validating... Epoch {epoch+1}")
