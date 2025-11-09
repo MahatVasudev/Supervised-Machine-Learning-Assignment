@@ -87,7 +87,7 @@ class FireSpreadDatasetLazy(Dataset):
     def __init__(self, csv_files: list[str], seq_len=7,
                  lat_col='lat_bin', lon_col='long_bin', date_col='date',
                  target_col='fire_count', downsample=1,
-                 dates: list = None, cache_dir="./cache"):
+                 dates: list = None, cache_dir="./cache", global_max=1036):
         """
         Optimized Lazy-loading dataset for large fire data with:
         - One-time CSV read at init
@@ -102,9 +102,13 @@ class FireSpreadDatasetLazy(Dataset):
         self.csv_files = csv_files
         self.downsample = downsample
         self.cache_dir = cache_dir
+        self.global_max = global_max
+        self.global_min = 0
+        self.global_mean = 0.33488836147712114
+        self.global_std = 2.925631213095511
+
         os.makedirs(cache_dir, exist_ok=True)
 
-        # 1️⃣ Load metadata once
         dfs_meta = []
         for f in csv_files:
             df = pd.read_csv(
@@ -113,23 +117,19 @@ class FireSpreadDatasetLazy(Dataset):
             dfs_meta.append(df)
         self.data_meta = pd.concat(dfs_meta, ignore_index=True)
 
-        # 2️⃣ Create bins
         self.lat_bins = np.sort(self.data_meta[lat_col].unique())[::downsample]
         self.lon_bins = np.sort(self.data_meta[lon_col].unique())[::downsample]
         self.num_lat = len(self.lat_bins)
         self.num_lon = len(self.lon_bins)
 
-        # 3️⃣ Extract all unique dates
         all_dates_sorted = sorted(self.data_meta[date_col].unique())
         self.dates = sorted(dates) if dates is not None else all_dates_sorted
         self.num_sequences = len(self.dates) - self.seq_len
 
-        # 4️⃣ Group by date once
         self.data_by_date = {
             date: df for date, df in self.data_meta.groupby(self.data_meta[date_col])
         }
 
-        # 5️⃣ RAM cache
         self._grid_cache = {}
 
     def __len__(self):
@@ -175,11 +175,12 @@ class FireSpreadDatasetLazy(Dataset):
         X_seq = np.stack([self._load_grid_for_day(d)
                          for d in seq_dates], axis=0)
         X_seq = X_seq[:, np.newaxis, :, :]  # (seq_len, 1, H, W)
-
+        X_seq = (X_seq - self.global_mean) / (self.global_std)
         # Target day
         Y_date = self.dates[idx + self.seq_len]
         Y_grid = self._load_grid_for_day(Y_date)[np.newaxis, :, :]  # (1, H, W)
 
+        Y_grid = (Y_grid - self.global_mean) / self.global_std
         return torch.tensor(X_seq, dtype=torch.float32), torch.tensor(Y_grid, dtype=torch.float32)
 
 
@@ -211,11 +212,11 @@ val_dataset = FireSpreadDatasetLazy(
 test_dataset = FireSpreadDatasetLazy(
     csv_files, seq_len=seq_len, dates=test_dates)
 
-batch_size = 6
+batch_size = 4
 train_loader = DataLoader(
     train_dataset, batch_size=batch_size, shuffle=True,  num_workers=4)
 val_loader = DataLoader(
-    val_dataset,   batch_size=batch_size, shuffle=False, num_workers=2)
+    val_dataset,   batch_size=batch_size, shuffle=False, num_workers=0)
 test_loader = DataLoader(
     test_dataset,  batch_size=batch_size, shuffle=False, num_workers=2)
 

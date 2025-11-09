@@ -1,4 +1,4 @@
-
+ 
 import torch
 import torch.nn as nn
 
@@ -11,7 +11,7 @@ class ConvLSTMCell(nn.Module):
         self.input_channels = input_channels
         self.hidden_channels = hidden_channels
         self.conv = nn.Conv2d(input_channels + hidden_channels,
-                              4 * hidden_channels, kernel_size, padding=padding)
+                              4 * hidden_channels, kernel_size, padding=padding, bias=True)
 
     def forward(self, x, h, c):
         combined = torch.cat([x, h], dim=1)
@@ -29,7 +29,7 @@ class ConvLSTMCell(nn.Module):
 
 
 class ConvLSTM(nn.Module):
-    def __init__(self, input_channel=1, hidden_channels=16, kernel_size=3, seq_len=7):
+    def __init__(self, input_channel=1, hidden_channels=20, kernel_size=3, seq_len=7):
         super().__init__()
         self.hidden_channels = hidden_channels
         self.seq_len = seq_len
@@ -51,7 +51,7 @@ class ConvLSTM(nn.Module):
 
 
 class ConvLSTM2Layers(nn.Module):
-    def __init__(self, input_channel=1, hidden_channels=16, kernel_size=3, seq_len=7):
+    def __init__(self, input_channel=1, hidden_channels=20, kernel_size=3, seq_len=7):
         super().__init__()
         self.hidden_channels = hidden_channels
         self.seq_len = seq_len

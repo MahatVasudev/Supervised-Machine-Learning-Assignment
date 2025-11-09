@@ -10,7 +10,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 criterion = nn.MSELoss()
 model = ConvLSTM().to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=0.002)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
     optimizer, mode='min', factor=0.5, patience=3)
 
@@ -47,15 +47,15 @@ def train_and_valid(epochs=10):
 
         scheduler.step(val_loss)
         print(f"Epoch [{
-              epoch + 1}/{epochs}] | Train Loss: {train_loss:.2f} | Val Loss: {val_loss:.2f}")
+              epoch + 1}/{epochs}] | Train Loss: {train_loss:.5f} | Val Loss: {val_loss:.5f} | Learning Rate {scheduler.get_last_lr()[0]}")
         save_checkpoint(epoch, model, optimizer,
-                        scheduler, filename="ConvLSTM")
+                        scheduler, filename="ConvLSTM_3v")
         if (epoch + 1) % 5 == 0:
             save_losses(epoch, train_losses, val_losses)
 
         if val_loss <= train_loss:
             save_checkpoint(epoch, model, optimizer,
-                            scheduler, filename="ConvLSTM_Best")
+                            scheduler, filename="ConvLSTM_3v")
         del X, y_pred, loss
         gc.collect()
         torch.cuda.empty_cache()
@@ -66,7 +66,7 @@ def save_losses(epoch, train_losses, val_losses):
     n_loss = len(train_losses)
     df = pd.DataFrame({"epoch": list(range(1, n_loss+1)),
                       "train_loss": train_losses, "val_loss": val_losses})
-    df.to_csv(f"./plots/ConvLSTM_till_{epoch+1}.csv", index=False)
+    df.to_csv(f"./plots/ConvLSTM_3_till_{epoch+1}.csv", index=False)
 
 
 def save_checkpoint(epoch, model, optimizer, scheduler, filename):
