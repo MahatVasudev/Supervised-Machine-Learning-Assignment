@@ -1,5 +1,13 @@
 ML_Model_Building/saved_models
 
+__pycache__/
+
+.ipynb_checkpoints/
+
+src/saved_models
+
 /datasets
 
 ML_Model_Building/cache
+
+src/cache
