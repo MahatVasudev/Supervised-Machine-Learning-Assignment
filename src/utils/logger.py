@@ -52,5 +52,6 @@ class Logger:
     def info_line(cls, msg):
         print(f"{cls._ts()}{cls.INFO_} {msg}{cls.RESET}")
 
+    @classmethod
     def warning_line(cls, msg):
         print(f"{cls._ts()}{cls.WARNING_} {msg}{cls.RESET}")
