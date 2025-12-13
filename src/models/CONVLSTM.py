@@ -1,6 +1,53 @@
- 
 import torch
 import torch.nn as nn
+
+
+class ConvLSTM_NLAYERS(nn.Module):
+    def __init__(self, input_channel=1, hidden_channels=[16, 32, 64], kernel_size=3):
+        """
+        hidden_channels: list → number of ConvLSTM layers = len(hidden_channels)
+        e.g. [16, 32, 64] → 3 ConvLSTM layers
+        """
+        super().__init__()
+
+        self.num_layers = len(hidden_channels)
+        self.hidden_channels = hidden_channels
+        layers = []
+        in_channels = input_channel
+
+        for h in hidden_channels:
+            layers.append(ConvLSTMCell(in_channels, h, kernel_size))
+            in_channels = h  # next layer receives previous layer's hidden states
+
+        self.layers = nn.ModuleList(layers)
+
+        # Output layer converts last hidden state to 1-channel prediction
+        self.conv_out = nn.Conv2d(hidden_channels[-1], 1, kernel_size=1)
+
+    def forward(self, x):
+        """
+        x: (batch, seq_len, C, H, W)
+        """
+        batch_size, seq_len, _, H, W = x.shape
+
+        # initialize hidden states for all layers
+        h = []
+        c = []
+        for h_ch in self.hidden_channels:
+            h.append(torch.zeros(batch_size, h_ch, H, W, device=x.device))
+            c.append(torch.zeros(batch_size, h_ch, H, W, device=x.device))
+
+        # process sequence
+        for t in range(seq_len):
+            inp = x[:, t]
+
+            for i, cell in enumerate(self.layers):
+                h[i], c[i] = cell(inp, h[i], c[i])
+                inp = h[i]    # feed output to next layer
+
+        # final output from last layer
+        out = self.conv_out(h[-1])
+        return out, h[-1]
 
 
 class ConvLSTMCell(nn.Module):
@@ -29,7 +76,7 @@ class ConvLSTMCell(nn.Module):
 
 
 class ConvLSTM(nn.Module):
-    def __init__(self, input_channel=1, hidden_channels=20, kernel_size=3, seq_len=7):
+    def __init__(self, input_channel=1, hidden_channels=[32, 64], kernel_size=3, seq_len=7):
         super().__init__()
         self.hidden_channels = hidden_channels
         self.seq_len = seq_len
