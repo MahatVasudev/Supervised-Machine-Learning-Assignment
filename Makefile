@@ -19,8 +19,8 @@ DECISION := $(BLUE)[decision]$(RESET):\n\t
 
 ## INFO: FILENAMES (CHANGE WHENEVER YOU LIKE, Make Sure the files have the same structure for arguments to work)
 
-TRAINING_FILE := src.training.py
-EVALUATION_FILE := src.evaluate.py
+TRAINING_FILE := src.training
+EVALUATION_FILE := src.evaluate
 
 ## INFO: Default Settings
 
@@ -86,5 +86,10 @@ train-script:
 		exit 1;\
 	};\
 	printf "$(INFO)Training Completed Using Script.\n"
+
+eval:
+	@printf "$(INFO)EVALUATION OF MODEL:"
+	python -m $(EVALUATION_FILE)
+
 
 full-process: install-dependencies clean-cache train

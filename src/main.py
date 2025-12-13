@@ -1,4 +1,4 @@
-# model training
+# FIX: This Whole File needs a rewrite but can be ignored as we are using training.py instead
 import torch
 import gc
 import torch.nn as nn
@@ -6,8 +6,8 @@ from datasets.fire_dataset import train_loader, val_loader
 from models.CONVLSTM import ConvLSTM, ConvLSTM2Layers
 import pandas as pd
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 criterion = nn.MSELoss()
 model = ConvLSTM().to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=0.002)

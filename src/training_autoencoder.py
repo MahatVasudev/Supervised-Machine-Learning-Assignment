@@ -1,22 +1,18 @@
 import torch
 import gc
-from torch.functional import F
 import torch.nn as nn
-from src.models.Auto_Encoder import AutoEncoderFire
-from src.datasets.datasets_context import DEFAULT_CONVLSTM_DATA_CONFIG, FireDatasetContext
-from src.datasets.fire_dataset import FireSpreadDatasetLazy
-from src.models.CONVLSTM_NEW import CONVLSTM_FIREMODEL
-# from models.CONVLSTM import ConvLSTM, ConvLSTM2Layers
 from src.utils.argparser import parser as training_parser
 from src.utils.logger import Logger
 from src.utils.training_tools import save_model, save_losses
-from src.config import MODEL_DIR
-import os
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+from src.models.Auto_Encoder import AutoEncoderFire
+from src.datasets.fire_dataset import FireGridAutoEncoderDataset
+from src.datasets.datasets_context import DEFAULT_AUTOENCODER_DATA_CONFIG, FireDatasetContext
+# INFO: Training Auto Encoder
+
+# CONSTANTS
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 args = training_parser.parse_args()
-
-# INFO: All of the command line arguments
 
 EPOCHS = args.epochs
 FILENAME = args.filename
@@ -26,75 +22,60 @@ LR = args.lr
 WEIGHT_DECAY = args.weight_decay
 SCHEDULER_PATIENCE = args.scheduler_patience
 
-data_context = FireDatasetContext(
-    dataset=FireSpreadDatasetLazy, config=DEFAULT_CONVLSTM_DATA_CONFIG)
-
-train_loader, val_loader, _ = data_context.load_dataloader()
-
-auto_encoder_model = AutoEncoderFire(in_channel=1, hidden_channels=[
-                                     64, 128, 256], bottleneck_channel=256)
-auto_encoder_model.load_state_dict(torch.load(os.path.join(
-    MODEL_DIR, "AUTOENCODER_VICTORY_BIGGER_MORE_EPOCHS_BETTER_Best_94_checkpoint.pt"))["model"])
-
-for p in auto_encoder_model.encoder_channels.parameters():
-    p.requires_grad = False
-
-for k in auto_encoder_model.decoder_channels.parameters():
-    k.requires_grad = True
-
-auto_encoder_model.train()
-
-model = CONVLSTM_FIREMODEL(
-    auto_encoder=auto_encoder_model, seq_len=7, hidden_channels=256).to(device)
-
+# Model
+model = AutoEncoderFire(in_channel=1, bottleneck_channel=256,
+                        hidden_channels=[64, 128, 256]).to(DEVICE)
 optimizer = torch.optim.Adam(
     model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
     optimizer, mode="min", factor=0.5, patience=SCHEDULER_PATIENCE)
 criterion = nn.MSELoss()
 scaler = torch.amp.GradScaler('cuda')
+data_context = FireDatasetContext(
+    FireGridAutoEncoderDataset, DEFAULT_AUTOENCODER_DATA_CONFIG)
+
+ae_train_loader, ae_val_loader, _ = data_context.load_dataloader()
 
 
-def training(epochs=EPOCHS):
-    print("Initializing Training...")
+def training_autoencoder():
+    Logger.info("Training Autoencoder")
     train_losses = []
     val_losses = []
     best_val_loss = float('inf')
-    for epoch in range(epochs):
+    for epoch in range(0, EPOCHS):
         model.train()
         train_loss = 0
-        for X, y in train_loader:
-            X, y = X.to(device), y.to(device)
+        for X, y in ae_train_loader:
+            X, y = X.to(DEVICE), y.to(DEVICE)
             optimizer.zero_grad()
-            with torch.autocast(device_type='cuda'):
-                y_pred = model(X).to(device)
+            with torch.cuda.amp.autocast():
+                y_pred = model(X).to(DEVICE)
                 loss = criterion(y_pred, y)
 
             scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5)
             scaler.step(optimizer)
             scaler.update()
             train_loss += loss.item()
 
-        # validation evaluation
-
         model.eval()
         val_loss = 0
 
         with torch.no_grad():
-            for X, y in val_loader:
-                X, y = X.to(device), y.to(device)
-                y_pred = model(X).to(device)
+            for X, y in ae_val_loader:
+                X, y = X.to(DEVICE), y.to(DEVICE)
+                y_pred = model(X).to(DEVICE)
                 val_loss += criterion(y_pred, y).item()
 
-        val_loss /= len(val_loader)
-        train_loss /= len(train_loader)
+        val_loss /= len(ae_val_loader)
+        train_loss /= len(ae_train_loader)
         scheduler.step(val_loss)
 
         train_losses.append(train_loss)
         val_losses.append(val_loss)
         if VERBOSE_MODE:
-            Logger.info_line(f"Epoch [{epoch + 1}/{epochs}] | Train Loss: {
+            Logger.info_line(f"Epoch [{epoch + 1}/{EPOCHS}] | Train Loss: {
                 train_loss} | Val Loss: {val_loss} | LR: {scheduler.get_last_lr()[0]} ")
 
         if LOG_LOSS:
@@ -112,12 +93,13 @@ def training(epochs=EPOCHS):
                 Logger.warning_line("Cleaning Garbage...")
             with torch.no_grad():
                 gc.collect()
-                if device == "cuda":
+                if DEVICE == "cuda":
                     torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":
-    print(EPOCHS)
+    Logger.info(f"USING DEVICE: {DEVICE}")
     data_context.summary()
-    training(epochs=EPOCHS)
-    Logger.executed("Training Completed! Rejoice!!!")
+    training_autoencoder()
+
+    Logger.executed("Training Done")
