@@ -1,3 +1,4 @@
+from typing import Optional
 import torch
 import numpy as np
 from torch.utils.data import Dataset
@@ -45,7 +46,7 @@ class FireSpreadDatasetLazy(FireDataset, Dataset):
     def __init__(self, csv_files: list[str], seq_len=7,
                  lat_col='lat_bin', lon_col='long_bin', date_col='date',
                  target_col='fire_count', downsample=1,
-                 dates: list = None, cache_dir=CACHE_DIR):
+                 dates: list = [], cache_dir=CACHE_DIR):
         """
         Optimized Lazy-loading dataset for large fire data with:
         - One-time CSV read at init

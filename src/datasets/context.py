@@ -1,12 +1,18 @@
 import pandas as pd
 import os
-from ..config import SRC_DATASET_DIR, DATASETS_DIR
+from ..config import GLOBAL_MODIS_DIR, SRC_DATASET_DIR, DATASETS_DIR
 from .fire_dataset import FireDataset, FireGridAutoEncoderDataset
 from torch.utils.data import DataLoader
-from typing import Type, Optional, List, Tuple
+from typing import Literal, Type, Optional, List, Tuple
 from .config import DatasetContextConfig
 from src.utils.logger import Logger
+from src.utils.data_tools import final_global_filename, find_final_data_bytime, find_final_metadata_bytime
+import gc
 
+# TODO: Add Regional Only Data Support
+
+
+# PERFORMANCE: Needs to Optimized bit mode
 
 class FireDatasetContext:
     def __init__(self, dataset: Type[FireDataset], config: DatasetContextConfig):
@@ -23,6 +29,8 @@ class FireDatasetContext:
             self.cfg.test_size = 0
 
         self.train_dates, self.valid_dates, self.test_dates = self.generate_dates()
+
+        self.find_global_stats()
 
     def generate_dates(self) -> Tuple[List, List, Optional[List]]:
         dfs = [pd.read_csv(f, usecols=['date']) for f in self.cfg.csv_files]
@@ -83,18 +91,52 @@ class FireDatasetContext:
         return train_dataset, valid_dataset, test_dataset
 
     def check_change_global_variable(self, dataset: FireDataset):
-        if self.cfg.global_max is not None:
-            assert self.cfg.global_max >= 0, "Count cannot be negative"
-            dataset.set_global_max(self.cfg.global_max)
+        dataset.set_global_max(self.global_max)
+        dataset.set_global_min(self.global_min)
+        dataset.set_global_mean(self.global_mean)
+        dataset.set_global_std(self.global_std)
 
-        if self.cfg.global_min is not None:
-            assert self.cfg.global_min >= 0, "Count cannot be negative"
-            dataset.set_global_min(self.cfg.global_min)
-        if self.cfg.global_mean is not None:
-            assert self.cfg.global_mean >= 0, "Count cannot be negative"
-            dataset.set_global_mean(self.cfg.global_mean)
-        if self.cfg.global_std is not None:
-            dataset.set_global_std(self.cfg.global_std)
+    def find_global_stats(self):
+
+        if self.cfg.metadata_csv_files is None:
+
+            return
+
+        global_max, global_min, global_mean, global_std = None, None, None, None
+
+        for f in self.cfg.metadata_csv_files:
+            if not os.path.exists(f):
+                Logger.warning_line(
+                    f"{f} not found; skipping; but may not give accurate results")
+                continue
+
+            df = pd.read_csv(f, index_col=0)
+
+            if "fire_count" not in df.columns:
+                Logger.warning_line(f"fire_count not found; skipping file")
+                continue
+
+            max_val = df.loc["max", "fire_count"]
+            min_val = df.loc["min", "fire_count"]
+            mean_val = df.loc["mean", "fire_count"]
+            std_val = df.loc["std", "fire_count"]
+
+            # Update global metrics across all files
+            global_max = max(
+                max_val, global_max) if global_max is not None else max_val
+            global_min = min(
+                min_val, global_min) if global_min is not None else min_val
+            global_mean = mean_val if global_mean is None else (
+                global_mean + mean_val) / 2
+            global_std = std_val if global_std is None else (
+                global_std + std_val) / 2
+
+        self.global_max = global_max
+        self.global_min = global_min
+        self.global_mean = global_mean
+        self.global_std = global_std
+
+        gc.collect()
 
     def load_dataloader(self) -> Tuple[DataLoader, DataLoader, Optional[DataLoader]]:
         train, valid, test = self.load_dataset()
@@ -112,7 +154,7 @@ class FireDatasetContext:
 
         test_loader = None
 
-        if self.cfg.test_needed:
+        if self.cfg.test_needed and test != None:
             test_loader = DataLoader(
                 test, batch_size=self.cfg.batch_size['test'],
                 shuffle=self.cfg.shuffle['test'],
@@ -177,26 +219,73 @@ class FireDatasetContext:
 
         Logger.info(
             "Normalization",
-            f"Global max         : {
-                self.cfg.global_max if self.cfg.global_max is not None else 'dataset default'}",
-            f"Global min         : {
-                self.cfg.global_min if self.cfg.global_min is not None else 'dataset default'}",
-            f"Global mean        : {
-                self.cfg.global_mean if self.cfg.global_mean is not None else 'dataset default'}",
-            f"Global std         : {
-                self.cfg.global_std if self.cfg.global_std is not None else 'dataset default'}",
+            f"Global max         : {self.global_max}",
+            f"Global min         : {self.global_min}",
+            f"Global mean        : {self.global_mean}",
+            f"Global std         : {self.global_std}",
         )
 
 
-csv_files = [os.path.join(DATASETS_DIR, "global_modis", "final_2020_by_day.csv"),
-             os.path.join(DATASETS_DIR, "global_modis",
-                          "final_2021_by_day.csv"),
-             os.path.join(DATASETS_DIR, "global_modis",
-                          "final_2024_by_day.csv")
-             ]
+def get_only_filenames(years: List[str | int], n_time: str, mode: Literal['final'] | Literal['metadata'] = 'final') -> List[str]:
 
+    if mode == 'final':
+        data = find_final_data_bytime(years, n_time)
+    elif mode == 'metadata':
+        data = find_final_metadata_bytime(years, n_time)
+    else:
+        Logger.fatal("get_only_filenames: Mode not found")
+
+    # HACK: Need to find a better way to code this, very inefficient
+    paths = []
+
+    if data == []:
+        Logger.fatal(
+            "get_only_filenames: No Datasets found, please generate it...")
+
+    for _, path in data:
+        paths.append(path)
+
+    return paths
+
+
+def __test_get_only_final_filenames():
+    print("Testing Get only final filenames function")
+
+    years_args = [(2020, "2021", 2022), (2022, 2023, 2024), ("2018",
+                                                             "2019", "2020"), ("2015", "2016"), ("2020", "2016", "2015", "2018")]
+    n_time = "1d"
+
+    expected_results = [[os.path.join(GLOBAL_MODIS_DIR, final_global_filename(x, n_time)) for x in ("2020", "2021", "2022")],
+                        [os.path.join(GLOBAL_MODIS_DIR, final_global_filename(
+                            x, n_time)) for x in ("2022", "2023", "2024")],
+                        [os.path.join(GLOBAL_MODIS_DIR, final_global_filename(
+                            x, n_time)) for x in ("2018", "2019", "2020")],
+                        [],
+                        [os.path.join(GLOBAL_MODIS_DIR, final_global_filename(
+                            x, n_time)) for x in ("2020", "2018")]
+                        ]
+
+    for test_arg in range(len(years_args)):
+        result = get_only_filenames(years_args[test_arg], n_time=n_time)
+
+        if result == expected_results[test_arg]:
+            Logger.testing_success(f"Got Correct Result, expected: {
+                                   expected_results[test_arg]}, got: {result}")
+
+        else:
+            Logger.testing_failure(
+                f"Got Incorrect Result, expected: {expected_results[test_arg]}, got: {result}")
+
+
+csv_files = get_only_filenames(
+    ["2018", "2019", "2020", "2021", "2022", "2023"], "1d")
+
+
+meta_files = get_only_filenames(
+    ["2018", "2019", "2020", "2021", "2022", "2023"], "1d", mode='metadata')
 DEFAULT_AUTOENCODER_DATA_CONFIG = DatasetContextConfig(
     csv_files=csv_files,
+    metadata_csv_files=meta_files,
     seq_len=0,
     cache_dir=os.path.join(SRC_DATASET_DIR, 'autoencoder_cache', 'cache'),
     train_size=0.7,

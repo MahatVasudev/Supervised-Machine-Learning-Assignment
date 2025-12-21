@@ -21,6 +21,7 @@ class DatasetContextConfig:
     # Needed Parameters
     csv_files: list[str]  # list of csv files locations
 
+    metadata_csv_files: Optional[list[str]] = None
     ###
     batch_size: SplitIntConfig = field(default_factory=lambda: {
         "train": 4,
