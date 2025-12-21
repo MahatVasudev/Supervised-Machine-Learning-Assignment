@@ -55,3 +55,13 @@ class Logger:
     @classmethod
     def warning_line(cls, msg):
         print(f"{cls._ts()}{cls.WARNING_} {msg}{cls.RESET}")
+
+    @classmethod
+    def testing_success(cls, msg):
+        print(f"{cls._ts()}{cls.GREEN}[Testing Success]{
+              cls.RESET}: {msg}{cls.RESET}")
+
+    @classmethod
+    def testing_failure(cls, msg):
+        print(f"{cls._ts()}{cls.RED}[Testing Failure]{
+              cls.RESET}: {msg}{cls.RESET}")
