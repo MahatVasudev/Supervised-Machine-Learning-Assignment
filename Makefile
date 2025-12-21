@@ -1,4 +1,4 @@
-.PHONY: create-env install-dependencies download-data start-app clean-cache train eval all
+.PHONY: create-env install-dependencies download-data-wind generate-modis-data start-app clean-cache train eval all
 
 ## INFO: Colors Mapping for Cleaner Logging 
 
@@ -19,8 +19,8 @@ DECISION := $(BLUE)[decision]$(RESET):\n\t
 
 ## INFO: FILENAMES (CHANGE WHENEVER YOU LIKE, Make Sure the files have the same structure for arguments to work)
 
-TRAINING_FILE := src.training
-EVALUATION_FILE := src.evaluate
+TRAINING_FILE := src.scripts.training
+EVALUATION_FILE := src.scripts.evaluate
 
 ## INFO: Default Settings
 
@@ -33,6 +33,16 @@ EPOCHS ?= 10
 WEIGHT_DECAY ?= 0.0005
 LR ?= 1e-3
 PATIENCE ?= 3
+HELP ?= False
+N_TIME=1d
+
+
+MODIS_GENERATE_FILE := src.data_scripts.make_dataset_script
+MODIS_YEARS ?= []
+MODIS_BATCH ?= 10
+MODIS_MODE ?= 0
+MODIS_BIN ?= 0.5
+
 
 create-env:
 	conda create -n $(ENV) python=$(PYTHON_VERSION) || {
@@ -57,7 +67,7 @@ start-app:
 
 clean-cache:
 	@printf "$(INFO)Cleaning Cache...\n"
-	@rm -rf src/cache/* || {\
+	@python -m src.scripts.clean_cache || {\
 		@printf "$(WARNING) Some Files Counldn't Be Cleaned!\n";\
 		exit 1;\
 	}
@@ -87,9 +97,14 @@ train-script:
 	};\
 	printf "$(INFO)Training Completed Using Script.\n"
 
+generate-modis-data:
+	@python -m $(MODIS_GENERATE_FILE) --years $(MODIS_YEARS) --batch_size $(MODIS_BATCH) --mode $(MODIS_MODE) --time $(N_TIME) --bin_size $(MODIS_BIN)
+
+
 eval:
 	@printf "$(INFO)EVALUATION OF MODEL:"
 	python -m $(EVALUATION_FILE)
+
 
 
 full-process: install-dependencies clean-cache train
