@@ -1,9 +1,8 @@
 import torch
 import gc
-from torch.functional import F
 import torch.nn as nn
 from src.models.Auto_Encoder import AutoEncoderFire
-from src.datasets.datasets_context import DEFAULT_CONVLSTM_DATA_CONFIG, FireDatasetContext
+from src.datasets.context import DEFAULT_CONVLSTM_DATA_CONFIG, FireDatasetContext
 from src.datasets.fire_dataset import FireSpreadDatasetLazy
 from src.models.CONVLSTM_NEW import CONVLSTM_FIREMODEL
 # from models.CONVLSTM import ConvLSTM, ConvLSTM2Layers
@@ -12,6 +11,8 @@ from src.utils.logger import Logger
 from src.utils.training_tools import save_model, save_losses
 from src.config import MODEL_DIR
 import os
+import pytorch_msssim
+
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 args = training_parser.parse_args()
@@ -45,13 +46,13 @@ for k in auto_encoder_model.decoder_channels.parameters():
 auto_encoder_model.train()
 
 model = CONVLSTM_FIREMODEL(
-    auto_encoder=auto_encoder_model, seq_len=7, hidden_channels=256).to(device)
+    auto_encoder=auto_encoder_model, hidden_channels=256).to(device)
 
 optimizer = torch.optim.Adam(
     model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
     optimizer, mode="min", factor=0.5, patience=SCHEDULER_PATIENCE)
-criterion = nn.MSELoss()
+mse_loss = nn.MSELoss()
 scaler = torch.amp.GradScaler('cuda')
 
 
@@ -68,8 +69,7 @@ def training(epochs=EPOCHS):
             optimizer.zero_grad()
             with torch.autocast(device_type='cuda'):
                 y_pred = model(X).to(device)
-                loss = criterion(y_pred, y)
-
+                loss = combined_loss(y_pred, y)
             scaler.scale(loss).backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5)
             scaler.step(optimizer)
@@ -85,7 +85,7 @@ def training(epochs=EPOCHS):
             for X, y in val_loader:
                 X, y = X.to(device), y.to(device)
                 y_pred = model(X).to(device)
-                val_loss += criterion(y_pred, y).item()
+                val_loss += combined_loss(y_pred, y).item()
 
         val_loss /= len(val_loader)
         train_loss /= len(train_loader)
@@ -116,8 +116,13 @@ def training(epochs=EPOCHS):
                     torch.cuda.empty_cache()
 
 
+def combined_loss(y_pred, y_true):
+    return mse_loss(y_pred, y_true) + 0.5 * (1 - pytorch_msssim.ssim(y_pred, y_true, data_range=1.0))
+
+
 if __name__ == "__main__":
     print(EPOCHS)
     data_context.summary()
     training(epochs=EPOCHS)
+    # TODO: Add a plotting function of metrics at the end
     Logger.executed("Training Completed! Rejoice!!!")

@@ -6,7 +6,7 @@ from src.utils.logger import Logger
 from src.utils.training_tools import save_model, save_losses
 from src.models.Auto_Encoder import AutoEncoderFire
 from src.datasets.fire_dataset import FireGridAutoEncoderDataset
-from src.datasets.datasets_context import DEFAULT_AUTOENCODER_DATA_CONFIG, FireDatasetContext
+from src.datasets.context import DEFAULT_AUTOENCODER_DATA_CONFIG, FireDatasetContext
 # INFO: Training Auto Encoder
 
 # CONSTANTS
