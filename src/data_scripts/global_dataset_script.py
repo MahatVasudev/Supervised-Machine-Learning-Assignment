@@ -12,9 +12,8 @@ from src.utils.data_tools import find_global_year_data, save_file
 from src.utils.data_tools import check_year_log,  check_selected_exists
 from src.utils.data_tools import extract_country_name, time_decoder, gather_country_files
 from src.utils.logger import Logger
-from src.config import GLOBAL_MODIS_DIR, MODIS_DIR
+from src.config import GLOBAL_MODIS_DIR, MODIS_DIR, DATETIME_FORMAT, DATE_FORMAT
 from src.utils.argparser import download_script_parser
-
 
 parser = download_script_parser.parse_args()
 YEARS = parser.years
@@ -23,8 +22,6 @@ BATCH_SIZE = parser.batch_size
 BIN_SIZE = parser.bin_size
 TIME = parser.time
 
-DATETIME_FORMAT = "%Y-%m-%d %H%M"
-DATE_FORMAT = "%Y-%m-%d"
 
 os.makedirs(GLOBAL_MODIS_DIR, exist_ok=True)
 os.makedirs(MODIS_DIR, exist_ok=True)

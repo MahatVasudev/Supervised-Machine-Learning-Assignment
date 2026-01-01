@@ -1,6 +1,7 @@
-from shutil import rmtree
-from src.config import CACHE_DIR, SRC_DATASET_DIR
 import os
+from shutil import rmtree
+
+from src.config import CACHE_DIR, SRC_DATASET_DIR
 
 if __name__ == "__main__":
 
@@ -10,6 +11,8 @@ if __name__ == "__main__":
     datascript_cache_folder_name = ["conv_cache", "autoencoder_cache"]
 
     cache_path = [
-        CACHE_DIR, *[os.path.join(SRC_DATASET_DIR, kc) for kc in datascript_cache_folder_name]]
+        CACHE_DIR,
+        *[os.path.join(SRC_DATASET_DIR, kc) for kc in datascript_cache_folder_name],
+    ]
     for path in cache_path:
-        rmtree(path)
+        rmtree(path, ignore_errors=True)

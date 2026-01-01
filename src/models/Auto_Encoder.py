@@ -4,11 +4,14 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 from .Encoder import SpatioAttention
 
 
 class AutoEncoderFire(nn.Module):
-    def __init__(self, in_channel: int, bottleneck_channel: int, hidden_channels: list[int]) -> None:
+    def __init__(
+        self, in_channel: int, bottleneck_channel: int, hidden_channels: list[int]
+    ) -> None:
         """
         #################################################
         #################################################
@@ -41,7 +44,9 @@ class AutoEncoderFire(nn.Module):
         self.max_channels = 20
 
         # Assertions
-        assert len(hidden_channels) <= self.max_channels, f"hidden channels can not be no more than MAX_CHANNELS {
+        assert (
+            len(hidden_channels) <= self.max_channels
+        ), f"hidden channels can not be no more than MAX_CHANNELS {
             self.max_channels}"
 
         self.in_channels = in_channel
@@ -51,7 +56,11 @@ class AutoEncoderFire(nn.Module):
         self.__hidden_channels_gen()
 
         self.bottleneck_encoder = AutoEncoderLayer(
-            in_channel=self.hidden_channels[-1], out_channel=self.bottleneck_channels, use_attention=True, is_encoder=True)
+            in_channel=self.hidden_channels[-1],
+            out_channel=self.bottleneck_channels,
+            use_attention=True,
+            is_encoder=True,
+        )
 
     def __hidden_channels_gen(self) -> None:
 
@@ -59,24 +68,42 @@ class AutoEncoderFire(nn.Module):
         decoder_listed = []
         in_chan = self.in_channels
         for hidden_channel_size in self.hidden_channels:
-            encoder_listed.append(AutoEncoderLayer(in_channel=in_chan,
-                                                   out_channel=hidden_channel_size, use_attention=True, is_encoder=True))
+            encoder_listed.append(
+                AutoEncoderLayer(
+                    in_channel=in_chan,
+                    out_channel=hidden_channel_size,
+                    use_attention=True,
+                    is_encoder=True,
+                )
+            )
             in_chan = hidden_channel_size
 
         in_chan = self.bottleneck_channels
         for hidden_channel_size_dec in reversed(self.hidden_channels):
-            decoder_listed.append(AutoEncoderLayer(
-                in_channel=in_chan, out_channel=hidden_channel_size_dec, use_attention=True, is_encoder=False))
+            decoder_listed.append(
+                AutoEncoderLayer(
+                    in_channel=in_chan,
+                    out_channel=hidden_channel_size_dec,
+                    use_attention=True,
+                    is_encoder=False,
+                )
+            )
             in_chan = hidden_channel_size_dec
 
-        decoder_listed.append(AutoEncoderLayer(
-            in_channel=in_chan, out_channel=self.in_channels, use_attention=False, is_encoder=False))
+        decoder_listed.append(
+            AutoEncoderLayer(
+                in_channel=in_chan,
+                out_channel=self.in_channels,
+                use_attention=False,
+                is_encoder=False,
+            )
+        )
         self.encoder_channels = nn.ModuleList(encoder_listed)
         self.decoder_channels = nn.ModuleList(decoder_listed)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         decoded_x = self.decode(self.encode(x))
-        return decoded_x[:, :, :x.shape[-2], :x.shape[-1]]
+        return decoded_x[:, :, : x.shape[-2], : x.shape[-1]]
 
     def decode(self, bottleneck: torch.Tensor) -> torch.Tensor:
         for layer in self.decoder_channels:
@@ -91,7 +118,9 @@ class AutoEncoderFire(nn.Module):
 
 
 class AutoEncoderLayer(nn.Module):
-    def __init__(self, in_channel: int, out_channel: int, use_attention: bool, is_encoder: bool):
+    def __init__(
+        self, in_channel: int, out_channel: int, use_attention: bool, is_encoder: bool
+    ):
         """
         ################################################
         ################################################
@@ -110,11 +139,22 @@ class AutoEncoderLayer(nn.Module):
         self.out_channel = out_channel
         self.use_attention = use_attention
         if is_encoder:
-            self.conv = nn.Conv2d(in_channels=in_channel,
-                                  out_channels=out_channel, kernel_size=3, padding=1, stride=2)
+            self.conv = nn.Conv2d(
+                in_channels=in_channel,
+                out_channels=out_channel,
+                kernel_size=3,
+                padding=1,
+                stride=2,
+            )
         else:
             self.conv = nn.ConvTranspose2d(
-                in_channels=in_channel, out_channels=out_channel, kernel_size=3, padding=1, stride=2, output_padding=1)
+                in_channels=in_channel,
+                out_channels=out_channel,
+                kernel_size=3,
+                padding=1,
+                stride=2,
+                output_padding=1,
+            )
 
         # self.bn = nn.BatchNorm2d(out_channel)
         num_groups = min(8, out_channel)
@@ -130,7 +170,7 @@ class AutoEncoderLayer(nn.Module):
 
         x = F.relu(self.gn(self.conv(x)))
 
-        if self.use_attention:
+        if self.use_attention and self.attn is not None:
             x = self.attn(x)
 
         return x
@@ -139,6 +179,7 @@ class AutoEncoderLayer(nn.Module):
 if __name__ == "__main__":
     X = torch.ones((1, 1, 685, 256), dtype=torch.float32)
     model = AutoEncoderFire(
-        in_channel=1, bottleneck_channel=128, hidden_channels=[32, 64, 128])
+        in_channel=1, bottleneck_channel=128, hidden_channels=[32, 64, 128]
+    )
 
     print(model(X).shape)
