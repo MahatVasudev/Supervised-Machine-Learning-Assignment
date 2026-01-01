@@ -1,14 +1,37 @@
-from typing import Optional
-import torch
-import numpy as np
-from torch.utils.data import Dataset
-import pandas as pd
+import datetime as dt
 import os
-from ..config import CACHE_DIR
+from typing import List, Literal, Optional
+
+import numpy as np
+import pandas as pd
+import torch
+from torch.utils.data import Dataset
+
+from src.config import CACHE_DIR, DATETIME_FORMAT
+from src.utils.logger import Logger
 
 
 class FireDataset(Dataset):
-    def __init__(self, csv_files: list[str], seq_len=7, lat_col='lat_bin', lon_col='long_bin', date_col='date', target_col='fire_count', downsample=1, dates: list | None = None, cache_dir=CACHE_DIR):
+    def __init__(
+        self,
+        csv_files: list[str],
+        seq_len=7,
+        lat_col="lat_bin",
+        lon_col="long_bin",
+        date_col="date",
+        target_col="fire_count",
+        downsample=1,
+        dates: list | None = None,
+        # Another negative of this approach i have to keep track of which date has been cached for atleast 1 epoch, also i have determine whether the whole year has been cached so that i dont load the dataset anymore
+        cache_dir=CACHE_DIR,
+        standardization: (
+            Literal["z-score"] | Literal["min-max"] | Literal["none"]
+        ) = "z-score",
+    ):
+
+        # TODO: Allow fixed data split for training, testing and validation,
+        # this should be done by some 'seed' value but should be able to make same training, validation and testing values even after reboot
+
         self.seq_len = seq_len
         self.lat_col = lat_col
         self.lon_col = lon_col
@@ -17,11 +40,16 @@ class FireDataset(Dataset):
         self.csv_files = csv_files
         self.downsample = downsample
         self.cache_dir = cache_dir
+        self.standard_choice = standardization
+        # HACK: Total Bullshit values, turns out these are not correct values, better use the metadata values...
+        self.cached_year = "0000"
         self.global_max = 1036  # default
         self.global_min = 0  # default
         self.global_mean = 0.33488836147712114  # default
         self.global_std = 2.925631213095511  # default
         self.dates = dates
+        self.cache_data: Optional[pd.DataFrame] = None
+        self.__make_map_of_files()
 
         os.makedirs(cache_dir, exist_ok=True)
 
@@ -37,16 +65,123 @@ class FireDataset(Dataset):
     def set_global_std(self, global_std):
         self.global_std = global_std
 
+    def set_latlongbins(self, latbins: List, longbins: List):
+        self.lat_bins = latbins
+        self.long_bins = longbins
+
+        self.num_lat = len(self.lat_bins)
+        self.num_lon = len(self.long_bins)
+
+    def __make_map_of_files(self):
+        # DONOT CALL THIS EVER
+        map = {}
+        for file in self.csv_files:
+            ext_year = extract_year_of_final_data(file)
+            if ext_year in map:
+                Logger.warning_line(
+                    f"Given {ext_year} Year data multiple times, skipping.."
+                )
+                continue
+            map[ext_year] = file
+
+        self.file_map = map
+
+    def _standardization(
+        self, x: torch.Tensor | np.ndarray
+    ) -> torch.Tensor | np.ndarray:
+        match self.standard_choice:
+            case "z-score":
+                return (x - self.global_mean) / self.global_std
+
+            case "min-max":
+                return (x - self.global_max) / (self.global_max - self.global_min)
+
+            case "none":
+                return x
+
+            case _:
+                Logger.fatal(
+                    "standardization technique not found, please enter a valid technique"
+                )
+
+    def _cache_exists(self, date):
+        return os.path.exists(self._cache_path(date))
+
+    def _load_grid_for_day(self, date: str | pd.Timestamp | dt.datetime) -> np.ndarray:
+        if isinstance(date, str):
+            new_date = dt.datetime.strptime(date, DATETIME_FORMAT)
+        elif isinstance(date, pd.Timestamp):
+            new_date = date.to_pydatetime()
+        else:
+            new_date = date
+        year = str(new_date.year)
+
+        if self._cache_exists(date):
+            return np.load(self._cache_path(date))
+
+        if self.cached_year != year:
+            self.cache_data = pd.read_csv(self.file_map[year])
+            self.cached_year = year
+
+        if self.cache_data is None:
+            Logger.fatal(f"Cache Data of {year} not loaded")
+
+        if date not in self.cache_data[self.date_col].unique():
+            grid = np.zeros((self.num_lat, self.num_lon))
+            np.save(self._cache_path(date), grid)
+            return grid
+
+        self.grouped = self.cache_data.groupby(self.cache_data[self.date_col])
+
+        df_day = self.grouped.get_group(date)
+        temp = df_day.pivot(
+            index=self.lat_col, columns=self.lon_col, values=self.target_col
+        ).fillna(0)
+        temp = temp.reindex(index=self.lat_bins, columns=self.long_bins, fill_value=0)
+        grid = temp.values.astype(np.float32)
+
+        # Save to disk for next time
+        np.save(self._cache_path(date), grid)
+        return grid
+
     def _cache_path(self, date):
         """Get on-disk cache path for this date."""
-        return os.path.join(self.cache_dir, f"{str(date.date())}.npy")
+        return os.path.join(self.cache_dir, f"{str(date)}.npy")
+
+
+# Lets make a dictionary which will keep the years as keys and the data path as the value
+# What we want to do is, since we will get the date as idx we can get the date from the list,
+# and extract year, then we can load the years data and take that specific day or hours or whatever, and then remove it from memory
+# The postitives of this approach is that we donot put the whole data into memory, but only the necessary file
+# The negative of this approach is that will get peaks of resource usage, like a continous triangle, buut only for the first epoch
+# Another negative of this approach i have to keep track of which date has been cached for atleast 1 epoch,
+# also i have determine whether the whole year has been cached so that i dont load the dataset anymore
+
+
+def extract_year_of_final_data(path: str) -> str:
+    paths_splited = os.path.split(path)
+    filename = paths_splited[-1]
+
+    # HACK: VERY BAD CODE: should work for now tho
+    return filename.split("_")[1]
 
 
 class FireSpreadDatasetLazy(FireDataset, Dataset):
-    def __init__(self, csv_files: list[str], seq_len=7,
-                 lat_col='lat_bin', lon_col='long_bin', date_col='date',
-                 target_col='fire_count', downsample=1,
-                 dates: list = [], cache_dir=CACHE_DIR):
+    def __init__(
+        self,
+        csv_files: list[str],
+        seq_len=7,
+        lat_col="lat_bin",
+        lon_col="long_bin",
+        date_col="date",
+        target_col="fire_count",
+        downsample=1,
+        dates: list = [],
+        cache_dir=CACHE_DIR,
+        standardization: (
+            Literal["z-score"] | Literal["min-max"] | Literal["none"]
+        ) = "z-score",
+    ):
         """
         Optimized Lazy-loading dataset for large fire data with:
         - One-time CSV read at init
@@ -54,86 +189,57 @@ class FireSpreadDatasetLazy(FireDataset, Dataset):
         - Faster grid lookup by date
         """
 
-        super().__init__(seq_len=seq_len, lat_col=lat_col, lon_col=lon_col, date_col=date_col,
-                         target_col=target_col, csv_files=csv_files, dates=dates, downsample=downsample, cache_dir=cache_dir)
+        super().__init__(
+            seq_len=seq_len,
+            lat_col=lat_col,
+            lon_col=lon_col,
+            date_col=date_col,
+            target_col=target_col,
+            csv_files=csv_files,
+            dates=dates,
+            downsample=downsample,
+            cache_dir=cache_dir,
+            standardization=standardization,
+        )
 
-        dfs_meta = []
-
-        for f in self.csv_files:
-            df = pd.read_csv(
-                f, usecols=[lat_col, lon_col, date_col, target_col])
-            df[date_col] = pd.to_datetime(df[date_col])
-            dfs_meta.append(df)
-        self.data_meta = pd.concat(dfs_meta, ignore_index=True)
-
-        self.lat_bins = np.sort(self.data_meta[lat_col].unique())[::downsample]
-        self.lon_bins = np.sort(self.data_meta[lon_col].unique())[::downsample]
-        self.num_lat = len(self.lat_bins)
-        self.num_lon = len(self.lon_bins)
-
-        all_dates_sorted = sorted(self.data_meta[date_col].unique())
-        self.dates = sorted(dates) if dates is not None else all_dates_sorted
+        self.dates = dates
         self.num_sequences = len(self.dates) - self.seq_len
-
-        self.data_by_date = {
-            date: df for date, df in self.data_meta.groupby(self.data_meta[date_col])
-        }
-
-        self._grid_cache = {}
 
     def __len__(self):
         return self.num_sequences
 
-    def _load_grid_for_day(self, date):
-        """Load grid for a given date (RAM or disk cache if possible)."""
-        if date in self._grid_cache:
-            return self._grid_cache[date]
-
-        # Check disk cache
-        cache_path = self._cache_path(date)
-        if os.path.exists(cache_path):
-            grid = np.load(cache_path)
-            self._grid_cache[date] = grid
-            return grid
-
-        # Otherwise build from grouped data
-        if date not in self.data_by_date:
-            grid = np.zeros((self.num_lat, self.num_lon), dtype=np.float32)
-            self._grid_cache[date] = grid
-            return grid
-
-        df_day = self.data_by_date[date]
-        temp = df_day.pivot(
-            index=self.lat_col, columns=self.lon_col, values=self.target_col).fillna(0)
-        temp = temp.reindex(index=self.lat_bins,
-                            columns=self.lon_bins, fill_value=0)
-        grid = temp.values.astype(np.float32)
-
-        # Save to disk for next time
-        np.save(cache_path, grid)
-        self._grid_cache[date] = grid
-        return grid
-
     def __getitem__(self, idx):
         # Sequence of input days
-        seq_dates = self.dates[idx:idx + self.seq_len]
-        X_seq = np.stack([self._load_grid_for_day(d)
-                         for d in seq_dates], axis=0)
+        seq_dates = self.dates[idx : idx + self.seq_len]
+
+        X_seq = np.stack([self._load_grid_for_day(d) for d in seq_dates], axis=0)
         X_seq = X_seq[:, np.newaxis, :, :]  # (seq_len, 1, H, W)
-        X_seq = (X_seq - self.global_mean) / (self.global_std)
+        X_seq = self._standardization(X_seq)
         # Target day
         Y_date = self.dates[idx + self.seq_len]
         Y_grid = self._load_grid_for_day(Y_date)[np.newaxis, :, :]  # (1, H, W)
 
-        Y_grid = (Y_grid - self.global_mean) / self.global_std
-        return torch.tensor(X_seq, dtype=torch.float32), torch.tensor(Y_grid, dtype=torch.float32)
+        Y_grid = self._standardization(Y_grid)
+        return torch.tensor(X_seq, dtype=torch.float32), torch.tensor(
+            Y_grid, dtype=torch.float32
+        )
 
 
 class FireGridAutoEncoderDataset(FireDataset, Dataset):
-    def __init__(self, csv_files: list[str],
-                 lat_col='lat_bin', lon_col='long_bin', date_col='date',
-                 target_col='fire_count', downsample=1,
-                 dates: list = None, cache_dir=CACHE_DIR, seq_len=None):
+    def __init__(
+        self,
+        csv_files: list[str],
+        lat_col="lat_bin",
+        lon_col="long_bin",
+        date_col="date",
+        target_col="fire_count",
+        downsample=1,
+        dates: list = [],
+        cache_dir=CACHE_DIR,
+        standardization: (
+            Literal["z-score"] | Literal["min-max"] | Literal["none"]
+        ) = "z-score",
+    ):
         """
         Single-day dataset for AutoEncoder training.
         - Fully supports disk caching (.npy)
@@ -141,78 +247,28 @@ class FireGridAutoEncoderDataset(FireDataset, Dataset):
         - Loads each day lazily + caches in RAM
         """
 
-        super().__init__(seq_len=0, lat_col=lat_col, lon_col=lon_col,
-                         date_col=date_col, target_col=target_col, csv_files=csv_files,
-                         dates=dates, downsample=downsample, cache_dir=cache_dir)
+        super().__init__(
+            seq_len=0,
+            lat_col=lat_col,
+            lon_col=lon_col,
+            date_col=date_col,
+            target_col=target_col,
+            csv_files=csv_files,
+            dates=dates,
+            downsample=downsample,
+            cache_dir=cache_dir,
+            standardization=standardization,
+        )
 
         # ---- Load metadata once ----
-        dfs_meta = []
-        for f in self.csv_files:
-            df = pd.read_csv(
-                f, usecols=[lat_col, lon_col, date_col, target_col])
-            df[date_col] = pd.to_datetime(df[date_col])
-            dfs_meta.append(df)
-
-        self.data_meta = pd.concat(dfs_meta, ignore_index=True)
-
-        # Spatial bins
-        self.lat_bins = np.sort(self.data_meta[lat_col].unique())[::downsample]
-        self.lon_bins = np.sort(self.data_meta[lon_col].unique())[::downsample]
-        self.num_lat = len(self.lat_bins)
-        self.num_lon = len(self.lon_bins)
 
         # Dates to use
-        all_dates_sorted = sorted(self.data_meta[date_col].unique())
-        self.dates = sorted(dates) if dates is not None else all_dates_sorted
 
-        self.num_sequences = len(self.dates)  # each day is a sample
-
-        # Group once by date
-        self.data_by_date = {
-            date: df for date, df in self.data_meta.groupby(self.data_meta[date_col])
-        }
-
-        # RAM cache for grids
-        self._grid_cache = {}
+        self.dates = dates
+        self.num_sequences = len(dates)  # each day is a sample
 
     def __len__(self):
         return self.num_sequences
-
-    def _load_grid_for_day(self, date):
-        """Load a single day's grid using RAM cache or disk cache."""
-        # 1) RAM cache
-        if date in self._grid_cache:
-            return self._grid_cache[date]
-
-        # 2) Disk cache
-        cache_path = self._cache_path(date)
-        if os.path.exists(cache_path):
-            grid = np.load(cache_path)
-            self._grid_cache[date] = grid
-            return grid
-
-        # 3) Build from CSV metadata
-        if date not in self.data_by_date:
-            grid = np.zeros((self.num_lat, self.num_lon), dtype=np.float32)
-            self._grid_cache[date] = grid
-            return grid
-
-        df_day = self.data_by_date[date]
-        temp = df_day.pivot(index=self.lat_col,
-                            columns=self.lon_col,
-                            values=self.target_col).fillna(0)
-
-        temp = temp.reindex(index=self.lat_bins,
-                            columns=self.lon_bins,
-                            fill_value=0)
-
-        grid = temp.values.astype(np.float32)
-
-        # Save to disk for future fast loading
-        np.save(cache_path, grid)
-        self._grid_cache[date] = grid
-
-        return grid
 
     def __getitem__(self, idx):
         """Return (X, X) for AutoEncoder training."""
@@ -222,7 +278,7 @@ class FireGridAutoEncoderDataset(FireDataset, Dataset):
         grid = grid[np.newaxis, :, :]  # (1, H, W)
 
         # Normalize
-        grid = (grid - self.global_mean) / self.global_std
+        grid = self._standardization(grid)
 
         X = torch.tensor(grid, dtype=torch.float32)
         return X, X  # target is same as input

@@ -26,7 +26,7 @@ EVALUATION_FILE := src.scripts.evaluate
 
 PYTHON_VERSION ?= 3.12.11 # currently compatible version
 ENV ?= fire_env
-FILENAME ?= CONV_LSTM
+MODEL_NAME ?= CONV_LSTM
 VERBOSE ?= FALSE
 LOG_LOSS ?= TRUE
 EPOCHS ?= 10
@@ -74,7 +74,7 @@ clean-cache:
 	@printf "$(INFO)Cleaning Complete.\n"
 
 train:
-	@printf "$(INFO)TRAINING OPTIONS:\n\t\t$(GREEN)Epochs$(RESET): $(EPOCHS)\n\t\t$(GREEN)MODEL NAME$(RESET): $(FILENAME)\n\t\t$(GREEN)Training Log Shown$(RESET): $(VERBOSE)\n\t\t$(GREEN)Save Training Loss$(RESET)?: $(LOG_LOSS)\n"
+	@printf "$(INFO)TRAINING OPTIONS:\n\t\t$(GREEN)Epochs$(RESET): $(EPOCHS)\n\t\t$(GREEN)MODEL NAME$(RESET): $(MODEL_NAME)\n\t\t$(GREEN)Training Log Shown$(RESET): $(VERBOSE)\n\t\t$(GREEN)Save Training Loss$(RESET)?: $(LOG_LOSS)\n"
 	@printf "\t\t$(GREEN)Learning Rate$(RESET): $(LR)\n\t\t$(GREEN)Weight Decay$(RESET): $(WEIGHT_DECAY)\n\t\t$(GREEN)Scheduler Patience$(RESET): $(PATIENCE)\n"
 	@bash -c '\
 		printf "$(DECISION)Do you want to proceed with the training? (y|$(BLUE)N$(RESET)): ";\
@@ -84,7 +84,7 @@ train:
 			exit 1;\
 		fi; \
 		printf "$(INFO)Beginning Training\n"; \
-		python -m $(TRAINING_FILE) --epochs $(EPOCHS) --filename $(FILENAME) --verbose $(VERBOSE) --log-loss $(LOG_LOSS) --lr $(LR) --weight-decay $(WEIGHT_DECAY) --scheduler-patience $(PATIENCE) || {\
+		python -m $(TRAINING_FILE) --epochs $(EPOCHS) --filename $(MODEL_NAME) --verbose $(VERBOSE) --log-loss $(LOG_LOSS) --lr $(LR) --weight-decay $(WEIGHT_DECAY) --scheduler-patience $(PATIENCE) || {\
 			printf "$(ERROR)FATAL Error Faced During Training. Aborting...\n";\
 			exit 1;\
 		}; \
